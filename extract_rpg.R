@@ -49,24 +49,23 @@ if(!is.sf.3d(dt)){
   
   }else{
 
-    dt_sf<-dt
+    dt_sf <- dt %>%
+      st_transform(crs=2154)
 
     }
   
 # add code_dept in case it is missing from input dataset
 
-
-
-if(path_dept != F){
+if(path_dept != F & is.null(dt_sf$code_dept)){
   load(path_dept)
   dt_sf<-st_join(dt_sf,france_political$dep_L93) }
 
-landscape<-list()
 
 # load information layer and extract data, by departement
 # loads each time the corresponding departement and its neighbors
 # to avoid missing data at points close to departement borders
-
+  
+landscape<-list()
 
 for(i in unique(dt_sf$code_dept)){
 
@@ -141,3 +140,6 @@ dt_product<-rbindlist(landscape,idcol='dept')
 return(dt_product)
 
 }
+
+
+

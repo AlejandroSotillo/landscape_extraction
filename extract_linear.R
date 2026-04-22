@@ -19,7 +19,7 @@
 #                 e.g. 'E:/OneDrive/work_conc/data/route500/dep/road_rail'
 #
 # path_dept       full file path, name and extension for the france_political layer
-#                 e.g. "E:/OneDrive/work_conc/data/political/france_political_20220728.RData"
+#                 e.g. "E:/OneDrive/work_conc/data/political/france_political/france_political_20221006.RData"
 #
 # buffer_radius   desired values for buffer radius in meters
 #                 e.g. c(500,1000,1500)
@@ -30,61 +30,57 @@ extract_linear <- function(dt,
                            id_field,
                            path_lines,
                            path_dept,
-                           buffer_radius){
-  
+                           buffer_radius,
+                           save_sf = F){
+
   # load required packages
   
-  lapply(c('data.table','reshape','dplyr','stringr','sf'),require, character.only = TRUE)
+  lapply(c('data.table','reshape','dplyr','stringr','sf','eRTG3D'), require, character.only = TRUE)
+  
+  load(path_dept)
+  
   
   # create spatial object from input dataset
 
   
   if(is.null(dt$departement)){
     
-    dtnames=c(id_field,'Longitude','Latitude')
+    dtnames = c(id_field, 'Longitude', 'Latitude')
     
   }else{
     
-    dtnames=c(id_field,'departement','Longitude','Latitude')
+    dtnames = c(id_field, 'departement', 'Longitude', 'Latitude')
     
   }
   
-  ##
   
-  if(!is.sf.3d(dt)){
+  if(is.sf.3d(dt)){
     
-    dt_sf<-st_as_sf(unique(as.data.table(dt)[,..dtnames]),
-                    coords = c('Longitude','Latitude'),remove=F) %>%
-      st_set_crs(4326) %>%
-      st_transform(crs=2154)
+    dt_sf <- dt %>% st_transform(crs = st_crs(france_political$dep_L93))
     
   }else{
     
-    dt_sf<-dt
+    dt_sf <- st_as_sf(unique(as.data.table(dt)[,..dtnames]), coords = c('Longitude','Latitude'), remove = F) %>%
+      st_set_crs(4326) %>% st_transform(crs = st_crs(france_political$dep_L93))
     
   }
-  
   
   
   # add dept in case it is missing from input dataset
   
-  load(path_dept)
+  if(path_dept != F & is.null(dt$departement)){ dt_sf <- st_join(dt_sf, france_political$dep_L93) }
   
-  if(is.null(dt$departement)){
-    
-    dt_sf<-st_join(dt_sf,france_political$dep_L93) }
   
-  landscape<-list()
+  landscape <- list()
   
   # load information layer and extract data, by departement
   # loads each time the corresponding departement and its neighbors
   # (avoid missing data at points close to departement borders)
   
-  
-  
-  for(i in unique(dt_sf$departement)){
+
+  for(i in unique(dt_sf$dept)){
     
-    lines_dt<-new.env()
+    lines_dt <- new.env()
     
     sapply( paste0( path_lines,'/',
                     c(i,
@@ -93,17 +89,19 @@ extract_linear <- function(dt,
                     '.RData'),
             FUN=function(file) {load(file, envir=lines_dt)})
     
-    lines_dt<-do.call('rbind',as.list(lines_dt))
+    lines_dt <- do.call('rbind',as.list(lines_dt))
   
     for(k in buffer_radius){
       
-      buffers <- st_buffer(dt_sf[dt_sf$departement==i,],k)
+      buffers <- st_buffer(dt_sf[dt_sf$dept==i,],k)
       
       suppressWarnings(
         buffers_intersec <- st_intersection(lines_dt,buffers)
       )
       
       buffers_intersec$length <-  st_length(buffers_intersec)
+      
+      if(save_sf == TRUE){ save(buffers_intersec, file = paste0('dep', i, '_', k, 'm', '.RData')) }
       
       landscape[[paste(i)]][[paste('buffer',k,sep='_')]]<-as.data.table(
         buffers_intersec)[,.(feature_length=sum(length),
@@ -120,13 +118,14 @@ extract_linear <- function(dt,
   
   # row-bind list
   
-  if(length(unique(dt_sf$departement))>1){
-    dt_product<-rbindlist(landscape,idcol='departement')
+  if(length(unique(dt_sf$dept)) > 1){
+    dt_product <- rbindlist(landscape, idcol = 'dept')
   }else{
-    dt_product<-landscape[[paste(i)]]
-    dt_product$departement=paste(unique(dt_sf$departement))
+    dt_product <- landscape[[paste(i)]]
+    dt_product$dept = paste(unique(dt_sf$dept))
   }
   
   return(dt_product)
   
 }
+
