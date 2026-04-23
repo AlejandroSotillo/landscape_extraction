@@ -11,6 +11,7 @@
 #
 #
 # dt              input data, containing fields "Longitude", "Latitude" and a unique row identifier
+
 #
 # id_field        name of the unique row identifier in dt
 #
@@ -33,12 +34,9 @@
 #
 # key_value       subset of categories of the classifying key to base calculations on
 #                 default key_value = 'all' calculates for all categories
-
-
 # Source of shapefiles:
-# https://www.theia-land.fr/en/ceslist/land-cover-sec/
-# https://www.theia-land.fr/en/product/land-cover-map/
-
+# https://www.theia-land.fr/en/blog/ceslist/land-cover-sec/ 
+# https://www.theia-land.fr/en/blog/product/land-cover-map/
 
 extract_oso <- function(dt,
                         id_field,
@@ -47,7 +45,7 @@ extract_oso <- function(dt,
                         buffer_radius,
                         path_key,
                         key,
-                        key_value){
+                        key_value = 'all'){
 
 # load required packages
 
@@ -57,8 +55,6 @@ lapply(c('data.table',
          'eRTG3D'),
        require, character.only = TRUE)
 
-
-
 # create spatial object from input dataset
 
 
@@ -66,7 +62,7 @@ if(!is.sf.3d(dt)){
   
   dt_sf<-st_as_sf(dt,coords = c('Longitude','Latitude'),remove=F) %>%
     st_set_crs(4326) %>%
-    st_transform(crs=2154)
+    st_transform(crs = 2154)
   
 }else{
   
@@ -77,38 +73,40 @@ if(!is.sf.3d(dt)){
 
 # add code_dept in case it is missing from input dataset
 
-
-
 if(path_dept != F){
   
   load(path_dept)
   
-  dt_sf<-st_join(dt_sf,france_political$dep_L93) }
+  dt_sf <- st_join(dt_sf, france_political$dep_L93) }
 
-
+  
 # load osokey
 
-osokey<-fread(path_key)
+osokey <- fread(path_key)
 
-if(any(key_value != 'all')){
-  osokey <- osokey[get(key) %in% key_value]
-}
+if(key == 'type_fr'){ osokey[, type_fr := gsub('\\ ', '_', type_fr) ]   }
 
+if(any(key_value != 'all')){ osokey <- osokey[get(key) %in% key_value] }
 
 # load oso layers and extract data, by departement
 # loads the corresponding departement and its neighbors
 # to avoid missing data at points close to departement borders
 
+landscape <- list()
 
-
-landscape<-list()
-length(landscape)<-length(key_value)
-names(landscape)<-key_value
-
-
-for(i in unique(dt_sf$code_dept)){
+if(key_value == 'all'){
   
-  paths<-as.list(paste0(
+  length(landscape) <- length(unlist(osokey[source == 'raster', ..key], use.names = F))
+  names(landscape) = unlist(osokey[source == 'raster', ..key], use.names = F)
+
+  }else{
+    length(landscape) <- length(key_value)
+    names(landscape) = key_value }
+
+
+for(i in unique(dt_sf[!is.na(dt_sf$code_dept),]$code_dept)){
+  
+  paths <- as.list(paste0(
     path_dat,'/','departement_',
     c(i,
       france_political$dep[unlist(st_touches(france_political$dep[france_political$dep$code_dept==i,],
@@ -116,41 +114,37 @@ for(i in unique(dt_sf$code_dept)){
     '.shp'))
   
   
-  oso <- lapply(paths,FUN= function(x) {merge(x = st_read(x)[,c('Classe','geometry')],
-                                              y = osokey[,c('Classe',key),with = F],
-                                              by = 'Classe', all.x = F, all.y = F)})
-  
-  polys<-list()
+    oso <- lapply(paths, FUN = function(x) { merge(x = st_read(x)[, c('Classe', 'geometry')],
+                                                   y = osokey[, c('Classe', key), with = F],
+                                                   by = 'Classe', all.x = F, all.y = F)})
+    
+    polys <- list()
   
   for(j in unique(as.data.frame(oso[[1]])[,2])){
   
     polys[[j]] <- do.call('rbind', lapply(oso, FUN = function(x){
       subset(oso[[1]], subset = as.data.frame(oso[[1]])[,2] == j)}))
     
-    landscape[[j]][[paste('dep',i,sep='_')]]  <-list()
+    landscape[[j]][[paste('dep', i, sep = '_')]]  <- list() }
     
-    }
-  
 
-  lines<-lapply(polys,FUN=function(x){ st_cast(x,"MULTILINESTRING")})
-  
+  lines <- lapply(polys, FUN = function(x){ st_cast(x, "MULTILINESTRING")})
   
   for(j in buffer_radius){
     
-    buffers <- st_buffer(dt_sf[dt_sf$code_dept==i,],j)[,c(id_field,'geometry')]
+    buffers <- st_buffer(dt_sf[dt_sf$code_dept == i,],j)[,c(id_field,'geometry')]
     
-    buffers_intersec_poly <- vector(mode='list',length = length(landscape))
-    buffers_intersec_line <- vector(mode='list',length = length(landscape))
+    buffers_intersec_poly <- vector(mode = 'list',length = length(landscape))
+    buffers_intersec_line <- vector(mode = 'list',length = length(landscape))
     
-    names(buffers_intersec_poly)<-names(landscape)
-    names(buffers_intersec_line)<-names(landscape)
+    names(buffers_intersec_poly) <- names(landscape)
+    names(buffers_intersec_line) <- names(landscape)
     
-    buffers_intersec_poly <- suppressWarnings(lapply(polys, FUN = function(x){
-      st_intersection(x, buffers)}))
-    buffers_intersec_line <- suppressWarnings(lapply(lines, FUN = function(x){
-      st_intersection(x, buffers)}))
+    buffers_intersec_poly <- suppressWarnings(lapply(polys, FUN = function(x){ st_intersection(x, buffers) }))
+    buffers_intersec_line <- suppressWarnings(lapply(lines, FUN = function(x){ st_intersection(x, buffers) }))
     
-    for(k in names(landscape)){ if (nrow(buffers_intersec_line[[k]])>0){
+
+    for(k in names(buffers_intersec_line)){ if (nrow(buffers_intersec_line[[k]])>0){
       
       buffers_intersec_poly[[k]]$area   <- st_area(buffers_intersec_poly[[k]])
       
